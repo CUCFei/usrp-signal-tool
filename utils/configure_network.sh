@@ -1,89 +1,55 @@
 #!/bin/bash
+# ------------------------------------------------------------
+# Ubuntu Server & Desktop 通用 有线网卡 DHCP↔静态回退脚本
+# ------------------------------------------------------------
+set -e
 
-# 检查是否以root权限运行
-if [ "$(id -u)" -ne 0 ]; then
-    echo "错误：此脚本需要root权限运行，请使用sudo执行"
-    exit 1
+[[ $EUID -ne 0 ]] && { echo "Must run with sudo"; exit 1; }
+
+if systemctl is-active --quiet NetworkManager.service 2>/dev/null; then
+    RENDERER="NetworkManager"
+else
+    RENDERER="networkd"
 fi
 
-# 函数：获取有线网络接口
-get_wired_interface() {
-    # 获取所有网络接口（排除回环接口）
-    interfaces=$(ip link show | awk -F': ' '/^[0-9]+: / && !/lo:/ {print $2}')
-    
-    # 优先查找eth或enp开头的有线接口
-    for iface in $interfaces; do
-        if [[ $iface == eth* || $iface == enp* ]]; then
-            echo "$iface"
-            return 0
-        fi
+get_wired_iface() {
+    local iface
+    for iface in $(ip -o link | awk -F': ' '$2!="lo"{print $2}' | sed 's/@.*//'); do
+        [[ $iface =~ ^(eth|enp|ens) ]] && { echo "$iface"; return 0; }
     done
-    
-    # 如果没有找到特定前缀的接口，返回第一个非无线接口
-    for iface in $interfaces; do
-        if [[ ! $iface == wlan* && ! $iface == wlp* ]]; then
-            echo "$iface"
-            return 0
-        fi
+    for iface in $(ip -o link | awk -F': ' '$2!="lo"{print $2}' | sed 's/@.*//'); do
+        [[ ! $iface =~ ^(wlan|wlp) ]] && { echo "$iface"; return 0; }
     done
-    
     return 1
 }
 
-# 获取有线接口
-echo "正在检测有线网络接口..."
-INTERFACE=$(get_wired_interface)
-if [ -z "$INTERFACE" ]; then
-    echo "错误：未找到有效的有线网络接口"
-    exit 1
-fi
-echo "已检测到有线网络接口：$INTERFACE"
+IFACE=$(get_wired_iface)
+[[ -z $IFACE ]] && { echo "未找到可用有线网卡"; exit 1; }
 
-# 定义netplan配置文件路径
-CONFIG_FILE="/etc/netplan/01-ethernet-config.yaml"
+echo "网卡: $IFACE | 渲染器: $RENDERER"
 
-# 创建netplan配置
-echo "正在创建网络配置文件..."
-cat > "$CONFIG_FILE" << EOF
-# 自动生成的有线网络配置：DHCP优先，失败时使用静态IP
+# 4. 生成 netplan 文件
+CONFIG="/etc/netplan/01-ethernet-config.yaml"
+cat > "$CONFIG" <<EOF
 network:
   version: 2
-  renderer: NetworkManager
+  renderer: $RENDERER
   ethernets:
-    $INTERFACE:
+    $IFACE:
       dhcp4: true
       dhcp4-overrides:
-        route-metric: 100  # DHCP路由优先级更高
-      addresses: [192.168.100.100/24]  # 静态IP地址
+        route-metric: 100
+      addresses: [192.168.100.100/24]   # DHCP 失败时的备用静态
       nameservers:
-        addresses: [8.8.8.8, 8.8.4.4]  # DNS服务器
+        addresses: [8.8.8.8, 8.8.4.4]
       routes:
         - to: default
-          via: 192.168.100.1  # 默认网关
-          metric: 200  # 静态路由优先级较低
+          via: 192.168.100.1
+          metric: 200
 EOF
 
-if [ $? -ne 0 ]; then
-    echo "错误：创建配置文件失败"
-    exit 1
-fi
+# 5. 验证并应用
+netplan generate
+netplan apply
 
-# 应用netplan配置
-echo "正在应用网络配置..."
-if ! netplan try --timeout 10; then
-    echo "错误：配置验证失败，正在回滚"
-    exit 1
-fi
-
-if ! netplan apply; then
-    echo "错误：应用配置失败"
-    exit 1
-fi
-
-echo "网络配置成功完成！"
-echo "配置详情："
-echo "1. 网络接口：$INTERFACE"
-echo "2. 优先使用DHCP获取IP地址"
-echo "3. 当DHCP失败时，将自动使用静态IP：192.168.100.100"
-exit 0
-    
+echo " 网络配置已生效（DHCP 优先，静态 192.168.100.100 备用）"
