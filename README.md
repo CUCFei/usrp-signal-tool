@@ -1,118 +1,226 @@
-# USRP Signal Manager
+# USRP Signal Tool
 
-USRP Signal Manager 是一个基于Web的USRP设备控制与信号管理工具，提供直观的界面用于USRP设备的信号录制、传输、实时频谱采集及文件管理等操作，适用于需要快速配置和控制USRP设备的场景。
+USRP Signal Tool 是一个基于 Flask 和 UHD 驱动的信号管理工具，用于控制 USRP 设备进行信号录制、传输和实时频谱分析。通过直观的 Web 界面，用户可以轻松配置设备参数、管理 IQ 数据文件，并可视化频谱信息。
 
 
 ## 功能概述
 
-- **设备管理**：自动发现并显示连接的USRP设备，支持设备选择与状态监控
-- **信号录制**：配置频率、采样率、增益等参数，录制信号到本地文件
-- **信号传输**：选择本地IQ文件，配置传输参数并发送信号
-- **实时频谱采集**：实时采集并显示频谱数据，直观观察信号特征
-- **频谱分析**：从录制或上传的IQ文件生成频谱图，支持保存分析结果
-- **文件管理**：上传、下载、删除录制或上传的IQ文件，方便数据管理
+- **设备管理**：自动发现并选择连接的 USRP 设备，显示设备详细信息（序列号、型号、最大增益等）
+- **信号录制**：配置频率、采样率、增益等参数，将 USRP 接收的信号保存为 IQ 数据文件
+- **信号传输**：选择本地 IQ 数据文件，通过 USRP 设备发送出去
+- **实时频谱分析**：实时采集信号并绘制频谱图，支持频率、采样率等参数动态调整
+- **文件管理**：上传、下载、删除 IQ 数据文件（包括录制文件和上传文件）
+- **系统监控**：显示 USRP 设备状态（是否存在溢出/欠载）、存储空间状态等
 
 
-## 安装与部署
+## 环境要求
 
-### 前置依赖
-
-- Python 3.6+
-- UHD (Universal Software Radio Peripheral) 库及工具（用于USRP设备通信）
-- 必要的Python包：`flask`, `numpy`, `scipy`（可通过`pip`安装）
-
-
-### 部署步骤
-
-1. **克隆仓库**（假设仓库地址）：
-   ```bash
-   git clone https://github.com/CUCFEI/usrp-signal-tool
-   cd usrp-signal-tool
-   ```
-
-2. **安装Python依赖**：
-   ```bash
-   pip install flask numpy scipy
-   ```
-
-3. **（可选）配置网络**：
-   若部署主机无键盘鼠标，可使用`configure_network.sh`脚本配置网络（支持DHCP优先，失败时自动使用静态IP 192.168.100.100）：
-   ```bash
-   sudo ./configure_network.sh
-   ```
-   脚本会自动检测有线网络接口并应用配置。
-
-4. **启动应用**：
-   ```bash
-   python app.py
-   ```
-
-5. **访问界面**：
-   在浏览器中输入 `http://<主机IP>:5000` 即可访问控制界面（默认端口为Flask默认端口5000，可在代码中修改）。
+- **操作系统**：Linux（推荐 Ubuntu 20.04/22.04）
+- **依赖软件**：
+  - UHD 驱动（`uhd-host`、`libuhd-dev`）
+  - Python 3.8+
+  - Python 库：`flask`、`flask-cors`、`numpy`、`scipy`
+  - 网络管理工具：`netplan`
 
 
-## 使用指南
+## 快速安装
 
-### 1. 设备管理
+### 1. 克隆仓库（假设项目仓库地址）
 
-- 页面顶部"Connected Devices"区域会自动发现并显示连接的USRP设备
-- 点击设备列表项选择需要使用的设备
-- 可通过"Refresh Devices"按钮手动刷新设备列表
-- 设备状态指示灯（绿色：正常；红色闪烁：异常）实时显示USRP连接状态
+```bash
+git clone https://github.com/your-username/usrp-signal-tool.git
+cd usrp-signal-tool
+```
 
+### 2. 运行环境配置脚本
 
-### 2. 信号录制（Record Signal Tab）
+项目提供自动化配置脚本，可快速安装依赖并初始化环境：
 
-- 配置录制参数：
-  - 文件名（自动生成时间戳文件名，可自定义）
-  - 频率（Hz）、采样率（samples/sec）、增益（dB）、通道
-  - 录制时长（秒）
-- 点击"Start Recording"开始录制，"Stop Recording"停止录制
-- 录制前会自动检查存储空间，确保有足够空间（至少保留1GB空闲空间）
+```bash
+# 赋予脚本执行权限
+chmod +x utils/configure_env.sh
 
+# 以 root 权限运行（需要安装系统依赖）
+sudo ./utils/configure_env.sh
+```
 
-### 3. 信号传输（Transmit Signal Tab）
-
-- 选择需要传输的IQ文件（支持上传或录制的文件）
-- 配置传输参数：频率（Hz）、采样率（samples/sec）、增益（dB）、通道
-- 点击"Start Transmission"开始传输，"Stop Transmission"停止传输
-- 传输进度条实时显示传输进度及时间信息
-
-
-### 4. 实时频谱采集（Realtime Capture Tab）
-
-- 配置采集参数：频率（Hz）、采样率（Sa/s）、增益（dB）、带宽（Hz）、通道
-- 点击"Start Capturing"开始实时采集，"Stop Capturing"停止采集
-- 采集过程中，频谱图实时更新，直观展示信号频谱特征
+脚本功能：
+- 安装系统依赖（UHD 驱动、Python 及相关工具）
+- 创建必要目录（`uploads`、`records`、`utils`）并配置权限
+- 安装 Python 依赖库
+- 可选创建 Python 虚拟环境
 
 
-### 5. 频谱分析（Spectrum Analyzer Tab）
+### 3. 网络配置（可选）
 
-- 选择需要分析的IQ文件（支持上传或录制的文件）
-- 配置采样率参数
-- 点击"Generate"生成频谱图，"Refresh"刷新分析结果，"Save Image"保存频谱图
-- 频谱图展示信号的频率-幅度特性
+若需要配置 USRP 网络环境（优先 DHCP，失败时使用静态 IP），可运行网络配置脚本：
 
+```bash
+sudo ./utils/configure_network.sh
+```
 
-### 6. 文件管理（File Management Tab）
-
-- **上传文件**：通过文件选择框选择IQ文件（.iq/.bin/.dat），点击"Upload"上传
-- **文件列表**：展示所有上传文件和录制文件，支持：
-  - 下载文件（点击下载按钮）
-  - 删除文件（点击删除按钮，需确认）
-
-
-## 注意事项
-
-- 确保USRP设备已正确连接并供电，且主机已安装UHD驱动
-- 录制/传输大文件时，确保主机有足够的存储空间
-- 实时频谱采集和信号传输可能受网络带宽或主机性能影响，建议使用高性能主机
-- 网络配置脚本`configure_network.sh`仅适用于Linux系统，且需要root权限运行
+配置说明：
+- 自动检测有线网络接口
+- 优先通过 DHCP 获取 IP 地址
+- DHCP 失败时自动使用静态 IP：`192.168.100.100/24`
+- DNS 服务器：`8.8.8.8`、`8.8.4.4`
 
 
-## 故障排除
+## 使用方法
 
-- **设备未发现**：检查USRP设备连接、供电，确保UHD工具可识别设备（可通过`uhd_find_devices`命令验证）
-- **操作失败**：查看页面提示信息，可能是参数不完整或设备正忙（同一时间只能进行录制/传输/采集中的一项操作）
-- **存储空间不足**：在"File Management"中删除不需要的文件释放空间
-- **网络问题**：若使用网络配置脚本后仍无法联网，可手动检查`/etc/netplan/01-ethernet-config.yaml`配置
+### 1. 启动应用
+
+```bash
+# 若使用虚拟环境，先激活
+source venv/bin/activate  # 仅当配置时选择了虚拟环境
+
+# 启动 Flask 应用
+python app.py
+```
+
+默认情况下，应用会在 `http://0.0.0.0:5000` 运行，可通过浏览器访问 Web 界面。
+
+
+### 2. Web 界面操作
+
+#### 设备选择
+
+- 页面顶部会自动发现并列出连接的 USRP 设备
+- 点击设备旁的 `Select` 按钮选择要使用的设备
+- 设备状态灯显示设备是否正常（绿色：正常；红色闪烁：溢出/欠载）
+
+
+#### 信号录制（Record Signal 标签页）
+
+- 配置参数：
+  - 文件名：自定义录制文件名称（默认自动生成时间戳）
+  - 频率：接收信号的中心频率（Hz）
+  - 时长：录制时间（秒）
+  - 采样率：信号采样率（samples/sec）
+  - 增益：接收增益（dB，不超过设备最大增益）
+  - 通道：选择接收通道（0 或 1）
+- 点击 `Start Recording` 开始录制，`Stop Recording` 停止
+
+
+#### 信号传输（Transmit Signal 标签页）
+
+- 配置参数：
+  - 选择文件：从上传文件或录制文件中选择要发送的 IQ 数据
+  - 频率：发送信号的中心频率（Hz）
+  - 采样率：信号采样率（需与文件匹配）
+  - 增益：发送增益（dB，不超过设备最大增益）
+  - 通道：选择发送通道（0 或 1）
+- 点击 `Start Transmission` 开始发送，`Stop Transmission` 停止
+
+
+#### 实时频谱采集（Realtime Capture 标签页）
+
+- 配置参数：
+  - 频率：采集的中心频率（Hz）
+  - 采样率：采集采样率（Sa/s）
+  - 增益：接收增益（dB）
+  - 带宽：信号带宽（Hz）
+  - 通道：采集通道（0 或 1）
+- 点击 `Start Capturing` 开始实时采集，页面会动态绘制频谱图
+
+
+#### 频谱分析（Spectrum Analyzer 标签页）
+
+- 选择本地 IQ 数据文件（上传或录制的文件）
+- 配置采样率，点击 `Generate` 生成频谱图
+- 可通过 `Save Image` 保存频谱图为 PNG 文件
+
+
+#### 文件管理（File Management 标签页）
+
+- 上传文件：点击 `Choose File` 选择本地 IQ 数据文件（.iq、.bin、.dat），点击 `Upload` 上传
+- 下载文件：点击文件旁的下载按钮保存到本地
+- 删除文件：点击文件旁的删除按钮移除文件
+
+
+## 开机自启动配置
+
+为方便部署，可将应用配置为系统服务，实现开机自启动：
+
+### 1. 创建系统服务文件
+
+```bash
+sudo nano /etc/systemd/system/usrp-signal-tool.service
+```
+
+### 2. 写入服务配置（根据实际路径修改）
+
+```ini
+[Unit]
+Description=USRP Signal Tool Service
+After=network.target uhd-host.service
+Wants=network-online.target
+
+[Service]
+User=your_username  # 替换为你的用户名
+Group=your_group    # 替换为你的用户组
+WorkingDirectory=/path/to/usrp-signal-tool  # 替换为项目根目录
+ExecStart=/path/to/python3 app.py  # 替换为 Python 路径（虚拟环境路径或系统 Python）
+Environment="PYTHONUNBUFFERED=1"
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### 3. 启用并启动服务
+
+```bash
+# 重新加载服务配置
+sudo systemctl daemon-reload
+
+# 启用开机自启动
+sudo systemctl enable usrp-signal-tool.service
+
+# 启动服务
+sudo systemctl start usrp-signal-tool.service
+
+# 查看服务状态
+sudo systemctl status usrp-signal-tool.service
+```
+
+
+## 目录结构
+
+```
+usrp-signal-tool/
+├── app.py               # 主应用程序（Flask 后端）
+├── index.html           # Web 前端界面
+├── uploads/             # 上传的 IQ 数据文件
+├── records/             # 录制的 IQ 数据文件
+├── utils/
+│   ├── configure_env.sh # 环境配置脚本
+│   └── configure_network.sh # 网络配置脚本
+│   └── usrp-signal-manager.serviceh # 服务模板
+├── static/              # 静态资源（CSS、JS、图标等）
+└── README.md            # 项目说明文档
+```
+
+
+## 常见问题
+
+1. **设备无法发现**：
+   - 检查 USRP 设备是否正确连接电源和网线
+   - 确认 UHD 驱动已正确安装：`uhd_find_devices` 命令是否能找到设备
+   - 检查用户权限（是否加入 `sudo` 组或对 USRP 设备有访问权限）
+
+2. **存储空间不足**：
+   - 录制前会自动检查存储空间，确保至少保留 1GB 空闲空间
+   - 可在 `File Management` 标签页删除不需要的文件释放空间
+
+3. **服务启动失败**：
+   - 查看日志排查问题：`journalctl -u usrp-signal-tool.service -f`
+   - 检查服务文件中的路径是否正确，用户是否有项目目录的读写权限
+
+
+## 许可证
+
+[MIT](LICENSE)
