@@ -199,7 +199,7 @@ usrp-signal-tool/
 ├── utils/
 │   ├── configure_env.sh # 环境配置脚本
 │   └── configure_network.sh # 网络配置脚本
-│   └── usrp-signal-manager.serviceh # 服务模板
+│   └── usrp-signal-tool.serviceh # 服务模板
 ├── static/              # 静态资源（CSS、JS、图标等）
 └── README.md            # 项目说明文档
 ```
