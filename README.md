@@ -28,7 +28,7 @@ USRP Signal Tool 是一个基于 Flask 和 UHD 驱动的信号管理工具，用
 ### 1. 克隆仓库（假设项目仓库地址）
 
 ```bash
-git clone https://github.com/your-username/usrp-signal-tool.git
+git clone https://github.com/CUCFei/usrp-signal-tool.git
 cd usrp-signal-tool
 ```
 
@@ -56,6 +56,9 @@ sudo ./utils/configure_env.sh
 若需要配置 USRP 网络环境（优先 DHCP，失败时使用静态 IP），可运行网络配置脚本：
 
 ```bash
+chmod +x utils/configure_env.sh
+
+# 以 root 权限运行
 sudo ./utils/configure_network.sh
 ```
 
@@ -140,7 +143,7 @@ python app.py
 
 ## 开机自启动配置
 
-为方便部署，可将应用配置为系统服务，实现开机自启动：
+为方便部署，可将应用配置为系统服务，实现开机自启动，可在utils中提供的模板基础上修改或直接创建到目标路径：
 
 ### 1. 创建系统服务文件
 
@@ -157,10 +160,12 @@ After=network.target uhd-host.service
 Wants=network-online.target
 
 [Service]
-User=your_username  # 替换为你的用户名
-Group=your_group    # 替换为你的用户组
-WorkingDirectory=/path/to/usrp-signal-tool  # 替换为项目根目录
-ExecStart=/path/to/python3 app.py  # 替换为 Python 路径（虚拟环境路径或系统 Python）
+ # 替换为你的用户名
+User=[your_username]
+#  替换为项目根目录
+WorkingDirectory=[/your_path_to/usrp-signal-tool]
+ # 替换为 Python 路径（虚拟环境路径或系统 Python）
+ExecStart=[/your_path_to/python3] app.py
 Environment="PYTHONUNBUFFERED=1"
 Restart=always
 RestartSec=5
