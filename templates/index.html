@@ -1,0 +1,1074 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>USRP Signal Manager</title>
+    <link href="/static/css/bootstrap.min.css" rel="stylesheet">
+    <link href="/static/css/bootstrap-icons.min.css" rel="stylesheet">
+    <script src="/static/js/chart.js"></script>
+    <script src="/static/js/bootstrap.bundle.min.js"></script>
+    <style>
+        /* 状态指示灯（顶部状态栏/录制/发送） */
+        .status-indicator {
+            width: 15px;
+            height: 15px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+        .status-connected { background-color: #28a745; }
+        .status-recording { background-color: #dc3545; animation: pulse 1.5s infinite; }
+        .status-transmitting { background-color: #ffc107; animation: pulse 1s infinite; }
+
+        /* 卡片悬浮效果 */
+        .card {
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.1);
+        }
+
+        /* 分区标题下划线 */
+        .section-title {
+            border-bottom: 2px solid #0d6efd;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+        }
+
+        /* 参数分组间距 */
+        .param-group { margin-bottom: 15px; }
+
+        /* 脉冲动画（录制/发送状态） */
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+
+        /* 文件列表项样式 */
+        .file-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px;
+            border-bottom: 1px solid #eee;
+        }
+        .file-item:last-child { border-bottom: none; }
+
+        /* 选项卡内容区间距 */
+        .tab-content { margin-top: 20px; }
+
+        /* 加载动画（设备发现/进度等） */
+        .spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(0,0,0,.3);
+            border-radius: 50%;
+            border-top-color: #0d6efd;
+            animation: spin 1s ease-in-out infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* 提示信息过渡动画 */
+        .alert { transition: all 0.3s ease; }
+
+        /* 设备信息字体缩小 */
+        .device-info { font-size: 0.9em; }
+
+        /* 频谱分析器容器 */
+        #spectrum-container {
+            position: relative;
+            height: 400px;
+            width: 100%;
+            margin-top: 20px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        /* 频谱控制区间距 */
+        .spectrum-controls { margin-bottom: 15px; }
+
+        /* USRP状态灯（设备卡片） */
+        .indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-left: 6px;
+        }
+        .indicator.ok   { background: green; }
+        .indicator.warn { background: red; animation: blink 1s infinite; }
+        @keyframes blink { 0%{opacity:1} 50%{opacity:.2} 100%{opacity:1} }
+
+        /* 分隔符样式 */
+        .divider::after {
+            content: "|";
+            margin: 0 5px;
+            color: #777;
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-4 mb-5">
+        <header class="mb-5 text-center">
+            <h1>USRP Signal Manager</h1>
+            <p class="text-muted">Control and configure your USRP devices for signal recording and transmission</p>
+            <div id="system-status" class="alert alert-info mt-3">
+                <span id="status-text">Ready</span>
+                <span id="activity-indicator" style="display: none;" class="spinner ms-2"></span>
+            </div>
+        </header>
+
+        <!-- Device Selection Section -->
+        <div class="card mb-5">
+            <div class="card-header bg-primary text-white">
+                <h2 class="h5 mb-0">Connected Devices</h2>
+            </div>
+            <div class="card-body">
+                <div id="device-list" class="list-group">
+                    <div class="d-flex justify-content-center">
+                        <div class="spinner"></div>
+                        <span class="ms-2">Discovering devices...</span>
+                    </div>
+                </div>
+                <!-- USRP状态灯 -->
+                <div class="d-flex align-items-center justify-content-between mt-3">
+                    <div class="d-flex align-items-center">
+                        <span class="me-2">USRP status:</span>
+                        <span id="usrp-indicator" class="indicator me-2" title="正常"></span>
+                        <small id="usrp-msg" class="text-muted"></small>
+                    </div>
+                    <button id="refresh-devices" class="btn btn-outline-secondary btn-sm">
+                        <i class="bi bi-arrow-clockwise"></i> Refresh Devices
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tabs for Operations -->
+        <ul class="nav nav-tabs" id="operation-tabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="record-tab" data-bs-toggle="tab" data-bs-target="#record" type="button" role="tab" aria-controls="record" aria-selected="true">
+                    <i class="bi bi-mic"></i> Record Signal
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="transmit-tab" data-bs-toggle="tab" data-bs-target="#transmit" type="button" role="tab" aria-controls="transmit" aria-selected="false">
+                    <i class="bi bi-broadcast-pin"></i> Transmit Signal
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+            <button class="nav-link" id="capture-spectrum-tab" data-bs-toggle="tab" data-bs-target="#capture-spectrum" type="button">
+                <i class="bi bi-speedometer2"></i> Realtime Capture
+            </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="spectrum-tab" data-bs-toggle="tab" data-bs-target="#spectrum" type="button" role="tab" aria-controls="spectrum" aria-selected="false">
+                    <i class="bi bi-bar-chart"></i> Spectrum Analyzer
+                </button>
+            </li>            
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="files-tab" data-bs-toggle="tab" data-bs-target="#files" type="button" role="tab" aria-controls="files" aria-selected="false">
+                    <i class="bi bi-files"></i> File Management
+                </button>
+            </li>
+        </ul>
+
+        <div class="tab-content" id="operation-tabs-content">
+            <!-- Recording Tab -->
+            <div class="tab-pane fade show active" id="record" role="tabpanel" aria-labelledby="record-tab">
+                <div class="card mt-3">
+                    <div class="card-header bg-success text-white">
+                        <h2 class="h5 mb-0">Recording Configuration</h2>
+                    </div>
+                    <div class="card-body">
+                        <form id="record-form">
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="param-group">
+                                        <label for="record-filename" class="form-label">File Name</label>
+                                        <input type="text" class="form-control" id="record-filename" placeholder="recording_1" required>
+                                    </div>
+                                    <div class="param-group">
+                                        <label for="record-frequency" class="form-label">Frequency (Hz)</label>
+                                        <input type="number" class="form-control" id="record-frequency" value="634000000" min="0" step="1000000" required>
+                                    </div>
+                                    <div class="param-group">
+                                        <label for="record-duration" class="form-label">Duration (seconds)</label>
+                                        <input type="number" class="form-control" id="record-duration" value="5" min="1" step="1" required>
+                                        <small id="record-size-hint" class="form-text text-muted">预估文件大小: 0 MB</small>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="param-group">
+                                        <label for="record-samplerate" class="form-label">Sample Rate (samples/sec)</label>
+                                        <input type="number" class="form-control" id="record-samplerate" value="7680000" min="100000" step="100000" required>
+                                    </div>
+                                    <div class="param-group">
+                                        <label for="record-gain" class="form-label">Gain (dB)</label>
+                                        <input type="number" class="form-control" id="record-gain" value="50" min="0" max="70" step="5" required>
+                                    </div>
+                                    <div class="param-group">
+                                        <label for="record-channel" class="form-label">Channel</label>
+                                        <input type="number" class="form-control" id="record-channel" value="0" min="0" max="1" step="1" required>
+                                    </div>
+                                </div>
+                            </div>                            
+                            <div id="storage-warning" class="alert alert-danger mt-3" style="display: none;">
+                                <strong>存储空间不足！</strong>
+                                <span id="storage-warning-message"></span>
+                            </div>
+                            
+                            <div id="storage-status" class="alert alert-info mt-3" style="display: none;">
+                                <strong>存储状态：</strong>
+                                <span id="storage-status-message"></span>
+                            </div>
+                            <div class="d-grid gap-2 d-md-flex justify-content-md-end mt-4">
+                                <button type="button" id="start-record" class="btn btn-success">
+                                    <i class="bi bi-play"></i> Start Recording
+                                </button>
+                                <button type="button" id="stop-record" class="btn btn-danger" disabled>
+                                    <i class="bi bi-stop"></i> Stop Recording
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Transmission Tab -->
+            <div class="tab-pane fade" id="transmit" role="tabpanel" aria-labelledby="transmit-tab">
+                <div class="card mt-3">
+                    <div class="card-header bg-warning text-dark">
+                        <h2 class="h5 mb-0">Transmission Configuration</h2>
+                    </div>
+                    <div class="card-body">
+                        <form id="transmit-form">
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="param-group">
+                                        <label for="transmit-filename" class="form-label">File to Transmit</label>
+                                        <select class="form-select" id="transmit-filename" required>
+                                            <option value="">Select a file...</option>
+                                        </select>
+                                    </div>
+                                    <div class="param-group">
+                                        <label for="transmit-frequency" class="form-label">Frequency (Hz)</label>
+                                        <input type="number" class="form-control" id="transmit-frequency" value="634000000" min="0" step="1000000" required>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="param-group">
+                                        <label for="transmit-samplerate" class="form-label">Sample Rate (samples/sec)</label>
+                                        <input type="number" class="form-control" id="transmit-samplerate" value="7680000" min="100000" step="100000" required>
+                                    </div>
+                                    <div class="param-group">
+                                        <label for="transmit-gain" class="form-label">Gain (dB)</label>
+                                        <input type="number" class="form-control" id="transmit-gain" value="70" min="0" max="90" step="5" required>
+                                    </div>
+                                    <div class="param-group">
+                                        <label for="transmit-channel" class="form-label">Channel</label>
+                                        <input type="number" class="form-control" id="transmit-channel" value="0" min="0" max="1" step="1" required>
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- 发送进度显示区域 -->
+                            <div id="transmit-progress-container" class="mt-4" style="display: none;">
+                                <div class="w-100 bg-gray-200 rounded-full h-2.5">
+                                    <div id="transmit-progress-bar" class="bg-warning h-2.5 rounded-full" style="width: 0%"></div>
+                                </div>
+                                <div class="mt-1 text-sm text-muted">
+                                    <span id="transmit-time-details">已发送: 00:00 / 00:00</span>
+                                </div>
+                            </div>
+                            <div class="d-grid gap-2 d-md-flex justify-content-md-end mt-4">
+                                <button type="button" id="start-transmit" class="btn btn-warning text-dark">
+                                    <i class="bi bi-play"></i> Start Transmission
+                                </button>
+                                <button type="button" id="stop-transmit" class="btn btn-danger" disabled>
+                                    <i class="bi bi-stop"></i> Stop Transmission
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- File Management Tab -->
+            <div class="tab-pane fade" id="files" role="tabpanel" aria-labelledby="files-tab">
+                <div class="card mt-3">
+                    <div class="card-header bg-info text-white">
+                        <h2 class="h5 mb-0">File Management</h2>
+                    </div>
+                    <div class="card-body">
+                        <!-- File Upload -->
+                        <div class="mb-5">
+                            <h3 class="h6 section-title">Upload IQ File</h3>
+                            <div class="input-group">
+                                <input type="file" class="form-control" id="file-upload" accept=".iq,.bin,.dat">
+                                <button class="btn btn-primary" type="button" id="upload-button">Upload</button>
+                            </div>
+                            <!-- 进度显示区域 -->
+                            <div id="upload-status-container" class="mt-4 hidden">
+                                <p id="upload-status" class="text-gray-700"></p>
+                                
+                                <div class="w-full bg-gray-200 rounded-full h-2.5 mt-2">
+                                    <div id="upload-progress" class="bg-blue-500 h-2.5 rounded-full" style="width: 0%"></div>
+                                </div>
+                                
+                                <div class="flex justify-between text-sm text-gray-500 mt-1">
+                                    <span id="upload-percentage">0%</span>
+                                    <span id="upload-details"> 0 MB / 0 MB</span>
+                                </div>
+                            </div>
+                        </div>                   
+
+                        <!-- Uploaded Files -->
+                        <div class="mb-5">
+                            <h3 class="h6 section-title">Uploaded Files</h3>
+                            <div id="uploaded-files-list">
+                                <div class="text-muted">No uploaded files</div>
+                            </div>
+                        </div>
+
+                        <!-- Recorded Files -->
+                        <div>
+                            <h3 class="h6 section-title">Recorded Files</h3>
+                            <div id="recorded-files-list">
+                                <div class="text-muted">No recorded files</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Spectrum Analyzer Tab -->
+            <div class="tab-pane fade" id="spectrum" role="tabpanel" aria-labelledby="spectrum-tab">
+                <div class="card mt-3">
+                    <div class="card-header bg-info text-white">
+                        <h2 class="h5 mb-0">Spectrum Analyzer</h2>
+                    </div>
+                    <div class="card-body">
+                        <div class="row spectrum-controls">
+                            <div class="col-md-6">
+                                <div class="param-group">
+                                    <label for="spectrum-filename" class="form-label">Select IQ File</label>
+                                    <select class="form-select" id="spectrum-filename" required>
+                                        <option value="">Select a file...</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="param-group">
+                                    <label for="spectrum-sample-rate" class="form-label">Sample Rate (samples/sec)</label>
+                                    <input type="number" class="form-control" id="spectrum-sample-rate" value="7680000" min="100000" step="100000" required>
+                                </div>
+                            </div>
+                            <div class="col-md-2 d-flex align-items-end">
+                                <button type="button" id="generate-spectrum" class="btn btn-info w-100">
+                                    <i class="bi bi-bar-chart"></i> Generate
+                                </button>
+                            </div>
+                        </div>
+
+                        <div id="spectrum-loading" style="display: none; margin-top: 10px;">
+                            <div class="spinner"></div>
+                            <span class="ms-2">Generating spectrum...</span>
+                        </div>
+                        
+                        <div class="row mt-3">
+                            <div class="col-md-12">
+                                <div id="spectrum-container"></div>
+                            </div>
+                        </div>
+
+                        <div class="d-grid gap-2 d-md-flex justify-content-md-end mt-4">
+                            <button type="button" id="refresh-spectrum" class="btn btn-outline-secondary">
+                                <i class="bi bi-arrow-clockwise"></i> Refresh
+                            </button>
+                            <button type="button" id="save-spectrum" class="btn btn-outline-primary">
+                                <i class="bi bi-download"></i> Save Image
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="tab-pane fade" id="capture-spectrum" role="tabpanel">
+                <div class="card mt-3">
+                    <div class="card-header bg-success text-white">
+                    <h2 class="h5 mb-0">实时频谱采集</h2>
+                    </div>
+                    <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-3">
+                        <label class="form-label">Frequency (Hz) (Hz)</label>
+                        <input type="number" class="form-control" id="capture-freq" value="634000000" step="1000000">
+                        </div>
+                        <div class="col-md-3">
+                        <label class="form-label">sampleRate (Sa/s)</label>
+                        <input type="number" class="form-control" id="capture-rate" value="15360000" step="1000000">
+                        </div>
+                        <div class="col-md-2">
+                        <label class="form-label">Gain (dB)</label>
+                        <input type="number" class="form-control" id="capture-gain" value="70" min="0" max="70" step=5>
+                        </div>
+                        <div class="col-md-2">
+                        <label class="form-label">Bandwidth (Hz)</label>
+                        <input type="number" class="form-control" id="capture-bw" value="12000000">
+                        </div>
+                        <div class="col-md-2">
+                        <label class="form-label">Channel</label>
+                        <input type="number" class="form-control" id="capture-chan" value="0" min="0" max="1">
+                        </div>
+                    </div>
+
+                    <div class="mt-3">
+                        <button id="capture-start-btn" class="btn btn-success me-2">Start Capturing</button>
+                        <button id="capture-stop-btn"  class="btn btn-danger" disabled>Stop Capturing</button>
+                    </div>
+
+                    <div id="capture-chart-container" style="height:400px; margin-top:20px; border:1px solid #ddd">
+                        <canvas id="capture-canvas"></canvas>
+                    </div>
+                </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script>
+        // 全局状态对象，集中管理页面状态
+        let appState = {
+            recording: false,
+            transmitting: false,
+            selectedDevice: null,
+            storage: { enough: true, available_mb: 0, required_mb: 0 },
+            spectrumChart: null
+        };
+
+        // 页面初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            refreshDevices();
+            updateGainInputs();
+            refreshFileLists();
+            setInterval(checkStatus, 1000);
+            setInterval(getTransmissionProgress, 500);
+            setInterval(checkStorageStatus, 30000);
+            document.getElementById('record-filename').value = generateTimestampFilename();
+
+            // 事件绑定
+            document.getElementById('refresh-devices').addEventListener('click', refreshDevices);
+            document.getElementById('start-record').addEventListener('click', startRecording);
+            document.getElementById('stop-record').addEventListener('click', stopRecording);
+            document.getElementById('start-transmit').addEventListener('click', startTransmission);
+            document.getElementById('stop-transmit').addEventListener('click', stopTransmission);
+            document.getElementById('upload-button').addEventListener('click', uploadFile);
+            document.getElementById('record-duration').addEventListener('change', updateRecordSizeHint);
+            document.getElementById('record-samplerate').addEventListener('change', updateRecordSizeHint);
+
+            // 频谱分析器初始化
+            initSpectrumFileSelect();
+            document.getElementById('generate-spectrum').addEventListener('click', generateSpectrum);
+            document.getElementById('refresh-spectrum').addEventListener('click', generateSpectrum);
+            document.getElementById('save-spectrum').addEventListener('click', saveSpectrumImage);
+
+            // 刷新预估文件大小
+            updateRecordSizeHint();
+        });
+
+        // 设备相关
+        function refreshDevices() {
+            fetch('/api/devices')
+                .then(response => response.json())
+                .then(data => {
+                    const deviceList = document.getElementById('device-list');
+                    deviceList.innerHTML = '';
+                    if (data.devices.length === 0) {
+                        deviceList.innerHTML = '<div class="text-muted">No USRP devices found</div>';
+                        return;
+                    }
+                    data.devices.forEach(device => {
+                        const item = document.createElement('div');
+                        item.className = `list-group-item d-flex justify-content-between align-items-center ${device.serial === data.selected ? 'list-group-item-primary' : ''}`;
+                        item.innerHTML = `
+                            <div>
+                                <strong>${device.type}</strong> (${device.product})
+                                <div class="text-muted small device-info">
+                                    <strong>Serial</strong>: ${device.serial}
+                                    <span class="divider"></span>
+                                    <strong>Name</strong>: ${device.name}
+                                    ${device.addr !== '' ? `<span class="divider"></span><strong>IP</strong>: ${device.addr}` : ''}
+                                    <span class="divider"></span>
+                                    <strong>Max Gain</strong>: Tx - ${device.max_tx_gain} dB， Rx - ${device.max_rx_gain} dB
+                                </div>
+                            </div>
+                            <div class="d-flex align-items-center">
+                                <span class="status-indicator status-connected me-2"></span>
+                                <button class="btn btn-sm btn-outline-primary select-device" data-serial="${device.serial}" data-product="${device.product}">
+                                    ${device.serial === data.selected ? 'Selected' : 'Select'}
+                                </button>
+                            </div>
+                        `;
+                        deviceList.appendChild(item);
+                    });
+                    document.querySelectorAll('.select-device').forEach(button => {
+                        button.addEventListener('click', function() {
+                            selectDevice(this.getAttribute('data-serial'), this.getAttribute('data-product'));
+                        });
+                    });
+                    appState.selectedDevice = data.selected;
+                })
+                .catch(error => {
+                    document.getElementById('device-list').innerHTML = '<div class="text-danger">Error discovering devices. Check UHD installation.</div>';
+                });
+        }
+        function selectDevice(serial, product) {
+            fetch('/api/select-device', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ device_serial: serial, device_product: product })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    appState.selectedDevice = data.selected;
+                    appState.maxTxGain = data.max_tx_gain;
+                    appState.maxRxGain = data.max_rx_gain;
+                    window.maxRxGain = data.max_rx_gain;
+                    window.maxTxGain = data.max_tx_gain;
+                    updateGainInputs();
+                    refreshDevices();
+                } else {
+                    alert('Failed to select device: ' + (data.message || 'Unknown error'));
+                }
+            });
+        }
+
+        // 状态检查与UI更新
+        function checkStatus() {
+            fetch('/api/status')
+                .then(response => response.json())
+                .then(data => {
+                    const wasRecording = appState.recording;
+                    appState.recording = data.recording;
+                    appState.transmitting = data.transmitting;
+                    appState.selectedDevice = data.selected_device;
+                    appState.capturing = data.capturing;
+                    // 状态栏显示
+                    const statusText = document.getElementById('status-text');
+                    const activityIndicator = document.getElementById('activity-indicator');
+                    const systemStatus = document.getElementById('system-status');
+                    if (appState.recording) {
+                        statusText.textContent = 'Recording in progress...';
+                        systemStatus.className = 'alert alert-danger mt-3';
+                        activityIndicator.style.display = 'inline-block';
+                    } else if (appState.transmitting) {
+                        statusText.textContent = 'Transmitting in progress...';
+                        systemStatus.className = 'alert alert-warning mt-3';
+                        activityIndicator.style.display = 'inline-block';
+                    } else if (appState.capturing) {
+                        statusText.textContent = 'Capturing in progress...';
+                        systemStatus.className = 'alert alert-info mt-3';
+                        activityIndicator.style.display = 'inline-block';
+                    } else {
+                        statusText.textContent = 'Ready';
+                        systemStatus.className = 'alert alert-info mt-3';
+                        activityIndicator.style.display = 'none';
+                    }
+                    // 按钮状态
+                    document.getElementById('start-record').disabled = appState.recording || appState.transmitting || !appState.selectedDevice;
+                    document.getElementById('stop-record').disabled = !appState.recording;
+                    document.getElementById('start-transmit').disabled = appState.transmitting || appState.recording || !appState.selectedDevice;
+                    document.getElementById('stop-transmit').disabled = !appState.transmitting;
+                    document.getElementById('capture-start-btn').disabled = appState.recording || appState.transmitting || appState.capturing || !appState.selectedDevice;
+                    document.getElementById('capture-stop-btn').disabled = !appState.capturing;
+                    // 进度条
+                    document.getElementById('transmit-progress-container').style.display = appState.transmitting ? 'block' : 'none';
+                    // 录制完成后刷新文件名
+                    if (wasRecording && !appState.recording) {
+                        document.getElementById('record-filename').value = generateTimestampFilename();
+                        showNotification('录制已完成', 'success');
+                    }
+                    // 状态变化时刷新文件列表
+                    if (!appState.recording && !appState.transmitting) {
+                        refreshFileLists();
+                    }
+                });
+        }
+
+        // 发送进度
+        function getTransmissionProgress() {
+            if (!appState.transmitting) return;
+            fetch('/api/transmission-time')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.progress !== undefined) {
+                        document.getElementById('transmit-progress-bar').style.width = `${data.progress}%`;
+                        const formatTime = s => `${String(Math.floor(s/60)).padStart(2,'0')}:${String(Math.floor(s%60)).padStart(2,'0')}`;
+                        document.getElementById('transmit-time-details').textContent =
+                            `已发送: ${formatTime(data.elapsed||0)} / ${formatTime(data.total||0)}`;
+                    }
+                });
+        }
+
+        // 录制与发送
+        function startRecording() {
+            if (!appState.selectedDevice) return alert('Please select a device first');
+            const gainInput = document.getElementById('record-gain');
+            gainInput.value = Math.max(Math.min(gainInput.value, gainInput.max), gainInput.min);
+            const requiredMB = calculateRecordSize();
+            fetch('/api/check-storage', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ required_mb: requiredMB })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (!data.enough) {
+                    alert(`存储空间不足！\n需要: ${requiredMB.toFixed(2)} MB\n可用: ${data.available_mb.toFixed(2)} MB\n至少需要保留1GB空闲空间`);
+                    return;
+                }
+                const recordData = {
+                    filename: document.getElementById('record-filename').value,
+                    frequency: parseFloat(document.getElementById('record-frequency').value),
+                    duration: parseFloat(document.getElementById('record-duration').value),
+                    sample_rate: parseInt(document.getElementById('record-samplerate').value),
+                    gain: parseFloat(document.getElementById('record-gain').value),
+                    channel: parseInt(document.getElementById('record-channel').value)
+                };
+                fetch('/api/start-recording', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(recordData)
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) showNotification('录制已开始', 'success');
+                    else showNotification(data.message, 'danger');
+                });
+            });
+        }
+        function stopRecording() {
+            if (confirm('Are you sure you want to stop recording?')) {
+                fetch('/api/stop-recording', { method: 'POST' });
+            }
+        }
+        function startTransmission() {
+            if (!appState.selectedDevice) return alert('Please select a device first');
+            const gainInput = document.getElementById('transmit-gain');
+            gainInput.value = Math.max(Math.min(gainInput.value, gainInput.max), gainInput.min);
+            const filename = document.getElementById('transmit-filename').value;
+            if (!filename) return alert('Please select a file to transmit');
+            const transmitData = {
+                filename,
+                frequency: parseFloat(document.getElementById('transmit-frequency').value),
+                sample_rate: parseInt(document.getElementById('transmit-samplerate').value),
+                gain: parseFloat(document.getElementById('transmit-gain').value),
+                channel: parseInt(document.getElementById('transmit-channel').value)
+            };
+            fetch('/api/start-transmission', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(transmitData)
+            })
+            .then(response => response.json())
+            .then(data => { if (data.status === 'error') alert(data.message); });
+        }
+        function stopTransmission() {
+            if (confirm('Are you sure you want to stop transmission?')) {
+                fetch('/api/stop-transmission', { method: 'POST' });
+            }
+        }
+
+        // 文件管理
+        function refreshFileLists() {
+            fetch('/api/files')
+                .then(response => response.json())
+                .then(data => {
+                    // 上传文件
+                    const uploadedFilesList = document.getElementById('uploaded-files-list');
+                    uploadedFilesList.innerHTML = data.uploads.length === 0
+                        ? '<div class="text-muted">No uploaded files</div>' : '';
+                    data.uploads.forEach(file => addFileToUI(uploadedFilesList, file, 'uploads'));
+                    // 录制文件
+                    const recordedFilesList = document.getElementById('recorded-files-list');
+                    recordedFilesList.innerHTML = data.records.length === 0
+                        ? '<div class="text-muted">No recorded files</div>' : '';
+                    data.records.forEach(file => addFileToUI(recordedFilesList, file, 'records'));
+                    // 下拉框
+                    const transmitSelect = document.getElementById('transmit-filename');
+                    const currentSelection = transmitSelect.value;
+                    while (transmitSelect.options.length > 1) transmitSelect.remove(1);
+                    [...data.uploads, ...data.records].forEach(file => {
+                        const option = document.createElement('option');
+                        option.value = file;
+                        option.textContent = file;
+                        transmitSelect.appendChild(option);
+                    });
+                    if (currentSelection) transmitSelect.value = currentSelection;
+                    updateSpectrumFileSelect(data);
+                });
+        }
+        function addFileToUI(container, filename, folder) {
+            const fileItem = document.createElement('div');
+            fileItem.className = 'file-item';
+            fileItem.innerHTML = `
+                <span>${filename}</span>
+                <div>
+                    <a href="/download/${folder}/${encodeURIComponent(filename)}" class="btn btn-sm btn-outline-primary me-1" download>
+                        <i class="bi bi-download"></i>
+                    </a>
+                    <button class="btn btn-sm btn-outline-danger delete-file" data-folder="${folder}" data-filename="${filename}">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </div>
+            `;
+            container.appendChild(fileItem);
+        }
+        document.addEventListener('click', function(e) {
+            if (e.target.closest('.delete-file')) {
+                const button = e.target.closest('.delete-file');
+                const folder = button.getAttribute('data-folder');
+                const filename = button.getAttribute('data-filename');
+                if (confirm(`Are you sure you want to delete ${filename}?`)) {
+                    fetch(`/api/delete-file/${folder}/${encodeURIComponent(filename)}`, { method: 'DELETE' })
+                        .then(() => refreshFileLists());
+                }
+            }
+        });
+
+        // 频谱分析器
+        function initSpectrumFileSelect() {
+            fetch('/api/files')
+                .then(response => response.json())
+                .then(data => updateSpectrumFileSelect(data));
+        }
+        function updateSpectrumFileSelect(data) {
+            const spectrumSelect = document.getElementById('spectrum-filename');
+            const currentSelection = spectrumSelect.value;
+            while (spectrumSelect.options.length > 1) spectrumSelect.remove(1);
+            [...data.uploads, ...data.records].forEach(file => {
+                const option = document.createElement('option');
+                option.value = file;
+                option.textContent = file;
+                spectrumSelect.appendChild(option);
+            });
+            if (currentSelection) spectrumSelect.value = currentSelection;
+        }
+        function generateSpectrum() {
+            const filename = document.getElementById('spectrum-filename').value;
+            const sampleRate = parseInt(document.getElementById('spectrum-sample-rate').value);
+            if (!filename) return alert('Please select a file first');
+            document.getElementById('spectrum-loading').style.display = 'block';
+            fetch('/api/generate-spectrum', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ filename, sample_rate: sampleRate })
+            })
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('spectrum-loading').style.display = 'none';
+                if (data.error) return alert(data.error);
+                plotSpectrum(data);
+            })
+            .catch(() => {
+                document.getElementById('spectrum-loading').style.display = 'none';
+                alert('Failed to generate spectrum');
+            });
+        }
+        function plotSpectrum(data) {
+            const container = document.getElementById('spectrum-container');
+            const canvas = document.createElement('canvas');
+            container.innerHTML = '';
+            container.appendChild(canvas);
+            if (appState.spectrumChart) appState.spectrumChart.destroy();
+            appState.spectrumChart = new Chart(canvas, {
+                type: 'line',
+                data: {
+                    labels: data.frequencies,
+                    datasets: [{
+                        label: 'Amplitude (dB)',
+                        data: data.amplitudes,
+                        borderColor: '#0d6efd',
+                        backgroundColor: 'rgba(13, 110, 253, 0.1)',
+                        borderWidth: 1,
+                        fill: true,
+                        tension: 0.1,
+                        pointRadius: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            title: { display: true, text: 'Frequency (Hz)', font: { weight: 'bold' } },
+                            ticks: {
+                                callback: function(value) {
+                                    const freq = this.getLabelForValue(value);                                    
+                                    if (Math.abs(freq) >= 1e6) return (freq / 1e6).toFixed(1) + ' MHz';
+                                    if (Math.abs(freq) >= 1e3) return (freq / 1e3).toFixed(1) + ' kHz';
+                                    return freq + ' Hz';
+                                }
+                            }
+                        },
+                        y: {
+                            title: { display: true, text: 'Amplitude (dB)', font: { weight: 'bold' } }
+                        }
+                    },
+                    interaction: { intersect: false, mode: 'index' },
+                    plugins: {
+                        tooltip: {
+                            callbacks: {
+                                title: function(tooltipItems) {
+                                    const freq = tooltipItems[0].label;                                    
+                                    if (Math.abs(freq) >= 1e6) return (freq / 1e6).toFixed(4) + ' MHz';
+                                    if (Math.abs(freq) >= 1e3) return (freq / 1e3).toFixed(4) + ' kHz';
+                                    return freq + ' Hz';
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        function saveSpectrumImage() {
+            if (!appState.spectrumChart) return alert('No spectrum to save. Generate one first.');
+            const canvas = appState.spectrumChart.canvas;
+            const link = document.createElement('a');
+            link.download = `spectrum_${new Date().getTime()}.png`;
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+        }
+
+        // 录制文件大小估算
+        function calculateRecordSize() {
+            const duration = parseFloat(document.getElementById('record-duration').value);
+            const sampleRate = parseInt(document.getElementById('record-samplerate').value);
+            return sampleRate * 8 * duration / (1024 * 1024);
+        }
+        function updateRecordSizeHint() {
+            const sizeMB = calculateRecordSize();
+            document.getElementById('record-size-hint').textContent = `预估文件大小: ${sizeMB.toFixed(2)} MB`;
+        }
+        function checkStorageStatus() {
+            const requiredMB = calculateRecordSize();
+            fetch('/api/storage-status')
+                .then(response => response.json())
+                .then(data => {
+                    appState.storage = {
+                        enough: data.available_mb > requiredMB + 1024,
+                        available_mb: data.available_mb,
+                        required_mb: requiredMB
+                    };
+                    const storageWarning = document.getElementById('storage-warning');
+                    const storageStatus = document.getElementById('storage-status');
+                    const warningMessage = document.getElementById('storage-warning-message');
+                    const statusMessage = document.getElementById('storage-status-message');
+                    if (!appState.storage.enough) {
+                        storageWarning.style.display = 'block';
+                        storageStatus.style.display = 'none';
+                        warningMessage.textContent = `需要: ${appState.storage.required_mb.toFixed(2)} MB, 可用: ${appState.storage.available_mb.toFixed(2)} MB, 请至少保留1GB空闲空间`;
+                    } else {
+                        storageWarning.style.display = 'none';
+                        storageStatus.style.display = 'block';
+                        statusMessage.textContent = `可用空间: ${(appState.storage.available_mb / 1024).toFixed(2)} GB`;
+                    }
+                });
+        }
+        function generateTimestampFilename() {
+            const now = new Date();
+            const pad = n => String(n).padStart(2, '0');
+            return `recording_${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+        }
+
+        // 文件上传
+        function uploadFile() {
+            const fileInput = document.getElementById('file-upload');
+            const file = fileInput.files[0];
+            if (!file) return showAlert('请选择要上传的文件', 'warning');
+            const statusContainer = document.getElementById('upload-status-container');
+            statusContainer.style.display = 'block';
+            const formData = new FormData();
+            formData.append('file', file);
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', '/api/upload', true);
+            xhr.upload.addEventListener('progress', function(e) {
+                if (e.lengthComputable) {
+                    const percent = (e.loaded / e.total) * 100;
+                    document.getElementById('upload-progress').style.width = percent + '%';
+                    document.getElementById('upload-percentage').textContent = Math.round(percent) + '%';
+                    const loadedMB = (e.loaded / (1024 * 1024)).toFixed(2);
+                    const totalMB = (e.total / (1024 * 1024)).toFixed(2);
+                    document.getElementById('upload-details').textContent = `${loadedMB} MB / ${totalMB} MB`;
+                }
+            });
+            xhr.onload = function() {
+                if (xhr.status === 200) {
+                    showAlert('文件上传成功', 'success');
+                    refreshFileLists();
+                    fileInput.value = '';
+                } else {
+                    showAlert('文件上传失败: ' + xhr.responseText, 'danger');
+                }
+                statusContainer.style.display = 'none';
+            };
+            xhr.onerror = function() {
+                showAlert('上传发生错误', 'danger');
+                statusContainer.style.display = 'none';
+            };
+            xhr.send(formData);
+        }
+        function showAlert(message, type) {
+            const systemStatus = document.getElementById('system-status');
+            systemStatus.className = `alert alert-${type}`;
+            systemStatus.innerHTML = message;
+            setTimeout(() => {
+                systemStatus.className = 'alert alert-info';
+                systemStatus.innerHTML = '<span id="status-text">Ready</span><span id="activity-indicator" style="display: none;" class="spinner ms-2"></span>';
+            }, 3000);
+        }
+        function showNotification(message, type = 'info') {
+            alert(message);
+        }
+
+        // USRP状态灯轮询
+        function pollUsrpStatus() {
+            fetch('/api/usrp-status')
+                .then(r => r.json())
+                .then(d => {
+                    const ind = document.getElementById('usrp-indicator');
+                    const msg = document.getElementById('usrp-msg');
+                    ind.className = 'indicator';
+                    if (d.status === 'OK') {
+                        ind.classList.add('ok');
+                        msg.textContent = '';
+                    } else if (d.status === 'O' || d.status === 'U') {
+                        ind.classList.add('warn');
+                        msg.textContent = d.msg;
+                    } else {
+                        ind.classList.add('ok');
+                        msg.textContent = '';
+                    }
+                })
+                .catch(() => {
+                    document.getElementById('usrp-indicator').className = 'indicator warn';
+                    document.getElementById('usrp-msg').textContent = '通信中断';
+                });
+        }
+        setInterval(pollUsrpStatus, 200);
+
+        // 增益输入框同步
+        function updateGainInputs() {
+            if (appState.maxTxGain) {
+                document.getElementById('transmit-gain').max = appState.maxTxGain;
+                document.getElementById('transmit-gain').value = appState.maxTxGain;
+            }
+            if (appState.maxRxGain) {
+                document.getElementById('record-gain').value = appState.maxRxGain;
+                document.getElementById('capture-gain').value = appState.maxRxGain;
+                document.getElementById('record-gain').max = appState.maxRxGain;
+                document.getElementById('capture-gain').max = appState.maxRxGain;
+            }
+        }
+
+        // 实时频谱采集
+        let rtChart = null;
+        const rtCtx = document.createElement('canvas').getContext('2d');
+        document.getElementById('capture-canvas').replaceWith(rtCtx.canvas);
+        document.getElementById('capture-start-btn').onclick = () => {
+            const params = {
+                freq: parseFloat(document.getElementById('capture-freq').value),
+                rate: parseFloat(document.getElementById('capture-rate').value),
+                gain: parseFloat(document.getElementById('capture-gain').value),
+                bw: parseFloat(document.getElementById('capture-bw').value),
+                channel: parseInt(document.getElementById('capture-chan').value)
+            };
+            fetch('/api/start-capturing', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(params)
+            })
+            .then(r => r.json())
+            .then(() => { toggleRtBtns(true); pollRtSpectrum(); });
+        };
+        document.getElementById('capture-stop-btn').onclick = () => {
+            fetch('/api/stop-capturing', { method: 'POST' }).then(() => toggleRtBtns(false));
+        };
+        function toggleRtBtns(running) {
+            document.getElementById('capture-start-btn').disabled = running;
+            document.getElementById('capture-stop-btn').disabled = !running;
+        }
+        function pollRtSpectrum() {
+            if (!document.getElementById('capture-spectrum').classList.contains('active')) return;
+            fetch('/api/capture-spectrum').then(r => r.json()).then(data => {
+                if (data.status !== 'no-data') {
+                    drawRtSpectrum(data.freqs, data.psd);
+                }
+                if (document.getElementById('capture-start-btn').disabled) setTimeout(pollRtSpectrum, 200);
+            }).catch(() => {});
+        }
+        function drawRtSpectrum(freqs, psd) {
+            if (!rtChart) {
+                rtChart = new Chart(rtCtx, {
+                    type: 'line',
+                    data: {
+                        labels: freqs,
+                        datasets: [{
+                            label: 'Amplitude (dB)',
+                            data: psd,
+                            borderColor: '#0d6efd',
+                            backgroundColor: 'rgba(13, 110, 253, 0.1)',
+                            borderWidth: 1,
+                            fill: true,
+                            tension: 0.1,
+                            pointRadius: 0
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            x: {
+                                title: { display: true, text: 'Frequency (Hz)', font: { weight: 'bold' } },
+                                ticks: {
+                                    callback: function(value) {
+                                        const freq = this.getLabelForValue(value);                                        
+                                        if (Math.abs(freq) >= 1e6) return (freq / 1e6).toFixed(1) + ' MHz';
+                                        if (Math.abs(freq) >= 1e3) return (freq / 1e3).toFixed(1) + ' kHz';
+                                        return freq + ' Hz';
+                                    }
+                                }
+                            },
+                            y: {
+                                min: -60,
+                                max: 100,
+                                title: { display: true, text: 'Amplitude (dB)', font: { weight: 'bold' } }
+                            }
+                        },
+                        interaction: { intersect: false, mode: 'index' },
+                        plugins: {
+                            tooltip: {
+                                callbacks: {
+                                    title: function(tooltipItems) {
+                                        const freq = tooltipItems[0].label;                                        
+                                        if (Math.abs(freq) >= 1e6) return (freq / 1e6).toFixed(4) + ' MHz';
+                                        if (Math.abs(freq) >= 1e3) return (freq / 1e3).toFixed(4) + ' kHz';
+                                        return freq + ' Hz';
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            } else {
+                rtChart.data.labels = freqs;
+                rtChart.data.datasets[0].data = psd;
+                rtChart.update('none');
+            }
+        }
+    </script>
+</body>
+</html>
