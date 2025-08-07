@@ -192,6 +192,20 @@ sudo systemctl start usrp-signal-tool.service
 sudo systemctl status usrp-signal-tool.service
 ```
 
+### 4. 建议关闭网络等待服务
+
+Ubuntu Server
+
+```bash
+sudo systemctl disable NetworkManager-wait-online.service
+sudo systemctl mask systemd-networkd-wait-online.service
+```
+
+Ubuntu Desktop
+
+```bash
+sudo systemctl disable NetworkManager-wait-online.service
+```
 
 ## 目录结构
 
